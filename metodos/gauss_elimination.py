@@ -8,11 +8,11 @@ import numpy as np
 def create_gauss_frame(parent_frame):
     """Crea la UI para el método de Eliminación Gaussiana."""
 
-    # --- Variables de control ---
     # Lista para mantener referencia a los widgets Entry de la matriz
     matrix_entries = []
 
     # --- Frames de UI ---
+    # -- Tengo que comentar todo esto para no perderme cuando lo revise después --
     # Controles de entrada (tamaño de matriz)
     input_frame = ttk.Frame(parent_frame)
     input_frame.pack(fill=X, pady=5)
@@ -21,14 +21,15 @@ def create_gauss_frame(parent_frame):
     matrix_frame = ttk.Frame(parent_frame)
     matrix_frame.pack(fill=X, pady=10)
 
-    # Resultados (paso a paso)
+    # Resultados
     results_frame = ttk.Labelframe(parent_frame, text="Resultados (Paso a Paso)", padding=10)
     results_frame.pack(fill=BOTH, expand=YES, pady=5)
 
     # --- Controles de Entrada ---
     ttk.Label(input_frame, text="Tamaño del sistema (n):").pack(side=LEFT, padx=5)
 
-    # Spinbox para seleccionar el tamaño n (de 2x2 a 8x8)
+    # Spinbox para seleccionar el tamaño n (supuestamente de 2x2 a 8x8)
+    # Falta validar
     n_var = ttk.IntVar(value=3)
     n_spinbox = ttk.Spinbox(input_frame, from_=2, to=8, textvariable=n_var, width=5)
     n_spinbox.pack(side=LEFT, padx=5)
@@ -37,7 +38,6 @@ def create_gauss_frame(parent_frame):
         input_frame,
         text="Generar Matriz",
         command=lambda: generate_matrix_grid(n_var.get(), matrix_frame, matrix_entries),
-        bootstyle=SECONDARY
     )
     create_btn.pack(side=LEFT, padx=10)
 
@@ -53,7 +53,7 @@ def create_gauss_frame(parent_frame):
     results_text = ScrolledText(results_frame, width=70, height=20, state="disabled", wrap="word")
     results_text.pack(fill=BOTH, expand=YES)
 
-    # Generar la matriz inicial (ej. 3x3)
+    # Generar la matriz inicial (3x3)
     generate_matrix_grid(n_var.get(), matrix_frame, matrix_entries)
 
 
@@ -73,7 +73,7 @@ def generate_matrix_grid(n, frame, entries_list):
             label_text = f"x{j + 1}"
         else:
             label_text = "b"
-            style = "primary.TLabel"  # Resaltar el vector de resultados
+            style = "primary.TLabel"
 
         header = ttk.Label(frame, text=label_text, bootstyle=style, anchor="center")
         header.grid(row=0, column=j + 1, padx=5, pady=2, sticky="ew")  # j+1 para dejar espacio a Fila N
@@ -91,7 +91,7 @@ def generate_matrix_grid(n, frame, entries_list):
             row_entries.append(entry)
         entries_list.append(row_entries)
 
-    # Ajustar el peso de las columnas para que se expandan uniformemente
+    # Ajustar el peso de las columnas para que se expandan uniformemente y no se rompa todo
     for j in range(n + 2):  # n+2 (por la etiqueta de fila)
         frame.grid_columnconfigure(j, weight=1)
 
@@ -181,7 +181,7 @@ def solve_gauss_generator(A, n, log_callback):
     # --- Variables determinante ---
     determinant = 1.0
     swap_count = 0
-    # --------------------------------------
+    # --- ---
 
     # Fase de Eliminación (Triangulación)
     for i in range(n):
@@ -191,7 +191,7 @@ def solve_gauss_generator(A, n, log_callback):
             for k in range(i + 1, n):
                 if np.abs(A[k, i]) > 1e-10:
                     A[[i, k]] = A[[k, i]]  # Intercambiar filas
-                    swap_count += 1  # <-- Contar el intercambio
+                    swap_count += 1  # Contar el intercambio
                     log_callback(f"Pivote cero en F{i + 1}. Intercambiando F{i + 1} con F{k + 1}.", "step")
                     log_callback(format_matrix(A), "matrix")
                     pivot_found = True
@@ -220,6 +220,9 @@ def solve_gauss_generator(A, n, log_callback):
 
     # --- Condicionamiento ---
     final_det = determinant * (-1) ** swap_count  # Ajustar por intercambios
+    # Explico esto porque después me voy a olvidar
+    # Cada vez que hacemos un intercambio cambia el signo de la determinante, entonces
+    # esto nos sirve para devolver el determinante a su signo original :D
 
     log_callback("\n--- Análisis de Estabilidad del Sistema ---", "step")
     log_callback(f"Determinante de la matriz A: {final_det:.4e}", "matrix")
@@ -235,16 +238,13 @@ def solve_gauss_generator(A, n, log_callback):
     log_callback("\nMatriz Triangulada (Fase de Eliminación Completa):", "step")
     log_callback(format_matrix(A), "matrix")
 
-    # Sustitución Hacia Atrás
-    x = np.zeros(n)
+    # Empieza la chad sustitución hacia atrás
+    x = np.zeros(n) # Es una función de Python
     for i in range(n - 1, -1, -1):
-        # Suma de A[i, j] * x[j] para j > i
         sum_ax = np.dot(A[i, i + 1:n], x[i + 1:n])
-
-        # Despejar x[i]
         x[i] = (A[i, n] - sum_ax) / A[i, i]
         log_callback(f"Sustitución hacia atrás: x{i + 1} = {x[i]:.4f}", "step")
         yield f"Calculando x{i + 1}"
 
-    # Devolver la solución final
+    # Devuelve la solución final
     yield x

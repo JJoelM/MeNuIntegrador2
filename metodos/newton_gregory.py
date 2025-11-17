@@ -5,6 +5,7 @@ from tkinter.scrolledtext import ScrolledText
 import numpy as np
 import math
 
+# Lista para mantener referencia a los widgets Entry de los puntos
 points_entries = []
 
 
@@ -45,7 +46,6 @@ def create_newton_frame(parent_frame):
         input_frame,
         text="Generar Tabla",
         command=lambda: generate_points_grid(n_var.get(), points_frame),
-        bootstyle=SECONDARY
     )
     create_btn.pack(side=RIGHT, padx=10)
 
@@ -58,7 +58,7 @@ def create_newton_frame(parent_frame):
 
     solve_btn = ttk.Button(
         controls_frame,
-        text="Interpolar",
+        text="Interpolar y Derivar",  # Texto del botón actualizado
         command=lambda: solve_newton_gregory(
             n_var, x_target_entry, method_var, results_text
         ),
@@ -77,6 +77,7 @@ def create_newton_frame(parent_frame):
     results_text.tag_config("calc", font=("Courier", 12))
     results_text.tag_config("solution", font=("Helvetica", 12, "bold"), foreground="green")
     results_text.tag_config("error", font=("Helvetica", 12, "bold"), foreground="red")
+    results_text.tag_config("deriv", font=("Helvetica", 12, "bold"), foreground="purple")
 
     # Tabla de puntos inicial
     generate_points_grid(n_var.get(), points_frame)
@@ -118,8 +119,9 @@ def generate_points_grid(n, frame):
 
 
 def solve_newton_gregory(n_var, x_target_entry, method_var, results_text):
-    """Punto de entrada: Valida y llama a la lógica de interpolación."""
+    """Punto de entrada: Valida y llama a la lógica de interpolación y derivación."""
     global points_entries
+    h = 0.0  # Se inicializa aquí
 
     # --- UI resultados ---
     results_text.config(state="normal")
@@ -156,6 +158,7 @@ def solve_newton_gregory(n_var, x_target_entry, method_var, results_text):
 
         # --- Validación: Equidistancia h ---
         if n > 1:
+            # Asignamos a la variable 'h' definida fuera del try
             h = np.round(x_values[1] - x_values[0], 9)  # Calcular h inicial
             if h <= 0:
                 raise ValueError("Los valores de X deben ser crecientes.")
@@ -168,17 +171,20 @@ def solve_newton_gregory(n_var, x_target_entry, method_var, results_text):
                     log(f"  h entre P{i} y P{i + 1} = {h_i}", "error")
                     return
         else:
-            h = 1  # Valor por defecto si solo hay un punto (aunque se necesitan min 3)
+            h = 1  # Valor por defecto
 
         log(f"Validación exitosa: Puntos equidistantes con h = {h}\n", "step")
 
     except ValueError as e:
         log(f"Error de Entrada: {e}", "error")
+        results_text.config(state="disabled")  # Bloquear al fallar
         return
     except Exception as e:
         log(f"Error inesperado: {e}", "error")
+        results_text.config(state="disabled")  # Bloquear al fallar
         return
 
+    # --- Bloque de Cálculo ---
     try:
         if method == "forward":
             log("Iniciando Interpolación de Newton-Gregory (Ascendente)", "title")
@@ -192,9 +198,15 @@ def solve_newton_gregory(n_var, x_target_entry, method_var, results_text):
             log(f"  u = (x - x₀) / h = ({x_target} - {x_values[0]}) / {h}", "calc")
             log(f"  u = {u:.6f}\n", "calc")
 
-            # Aplicar la fórmula
+            # Aplicar la fórmula de interpolación
             diffs_y0 = table[0, :]  # La primera fila contiene y₀, Δy₀, Δ2y₀, ...
             result = apply_newton_forward(diffs_y0, u, n, log)
+            log(f"\nResultado Interpolación:", "title")
+            log(f"  P({x_target}) ≈ {result:.8f}", "solution")
+
+            # --- Cálculo de Derivadas ---
+            log("\n--- Cálculo de Derivadas (Ascendente) ---", "title")
+            apply_newton_derivatives(diffs_y0, u, n, h, log, x_target, backward=False)
 
         else:  # method == "backward"
             log("Iniciando Interpolación de Newton-Gregory (Descendente)", "title")
@@ -208,17 +220,20 @@ def solve_newton_gregory(n_var, x_target_entry, method_var, results_text):
             log(f"  u = (x - xₙ) / h = ({x_target} - {x_values[-1]}) / {h}", "calc")
             log(f"  u = {u:.6f}\n", "calc")
 
-            # Aplicar la fórmula
+            # Aplicar la fórmula de interpolación
             diffs_yn = table[-1, :]  # La última fila contiene yₙ, ∇yₙ, ∇2yₙ, ...
             result = apply_newton_backward(diffs_yn, u, n, log)
+            log(f"\nResultado Interpolación:", "title")
+            log(f"  P({x_target}) ≈ {result:.8f}", "solution")
 
-        log(f"\nResultado Final:", "title")
-        log(f"  P({x_target}) ≈ {result:.8f}", "solution")
+            # --- Cálculo de Derivadas ---
+            log("\n--- Cálculo de Derivadas (Descendente) ---", "title")
+            apply_newton_derivatives(diffs_yn, u, n, h, log, x_target, backward=True)
 
     except Exception as e:
         log(f"\nError durante el cálculo: {e}", "error")
     finally:
-        results_text.config(state="disabled")
+        results_text.config(state="disabled")  # Bloquear siempre al final
 
 
 def build_forward_diff_table(y, n):
@@ -330,3 +345,144 @@ def apply_newton_backward(diffs_yn, s, n, log_callback):
                      "calc")
 
     return result
+
+
+# --- DERIVADAS ---
+# Me había olvidado que esto también iba
+def _get_s_poly_derivs_forward(i, s):
+    """
+    Calcula la 1ra (p') y 2da (p'') derivada del polinomio 's' ascendente
+    p_i(s) = s(s-1)...(s-i+1)
+    Retorna (p', p'')
+    """
+    if i == 0: return (0, 0)
+    if i == 1: return (1, 0)
+    if i == 2:  # s(s-1) = s^2 - s
+        p_prime = 2 * s - 1
+        p_double_prime = 2
+        return (p_prime, p_double_prime)
+    if i == 3:  # s(s-1)(s-2) = s^3 - 3s^2 + 2s
+        p_prime = 3 * s ** 2 - 6 * s + 2
+        p_double_prime = 6 * s - 6
+        return (p_prime, p_double_prime)
+    if i == 4:  # s(s-1)(s-2)(s-3) = s^4 - 6s^3 + 11s^2 - 6s
+        p_prime = 4 * s ** 3 - 18 * s ** 2 + 22 * s - 6
+        p_double_prime = 12 * s ** 2 - 36 * s + 22
+        return (p_prime, p_double_prime)
+    # Se pueden añadir más términos si se incrementa el N máximo
+
+    # Término genérico (más lento, pero funciona para i > 4)
+    # Para la 1ra derivada:
+    p_prime = 0
+    for j in range(i):
+        term_prod = 1
+        for k in range(i):
+            if k != j:
+                term_prod *= (s - k)
+        p_prime += term_prod
+
+    # Para la 2da derivada:
+    p_double_prime = 0
+    for j in range(i):
+        for k in range(i):
+            if j == k: continue
+            term_prod = 1
+            for m in range(i):
+                if m != j and m != k:
+                    term_prod *= (s - m)
+            p_double_prime += term_prod
+
+    return (p_prime, p_double_prime)
+
+
+def _get_s_poly_derivs_backward(i, s):
+    """
+    Calcula la 1ra (p') y 2da (p'') derivada del polinomio 's' descendente
+    p_i(s) = s(s+1)...(s+i-1)
+    Retorna (p', p'')
+    """
+    if i == 0: return (0, 0)
+    if i == 1: return (1, 0)
+    if i == 2:  # s(s+1) = s^2 + s
+        p_prime = 2 * s + 1
+        p_double_prime = 2
+        return (p_prime, p_double_prime)
+    if i == 3:  # s(s+1)(s+2) = s^3 + 3s^2 + 2s
+        p_prime = 3 * s ** 2 + 6 * s + 2
+        p_double_prime = 6 * s + 6
+        return (p_prime, p_double_prime)
+    if i == 4:  # s(s+1)(s+2)(s+3) = s^4 + 6s^3 + 11s^2 + 6s
+        p_prime = 4 * s ** 3 + 18 * s ** 2 + 22 * s + 6
+        p_double_prime = 12 * s ** 2 + 36 * s + 22
+        return (p_prime, p_double_prime)
+
+    # Término genérico (más lento, pero funciona para i > 4)
+    # Para la 1ra derivada:
+    p_prime = 0
+    for j in range(i):
+        term_prod = 1
+        for k in range(i):
+            if k != j:
+                term_prod *= (s + k)
+        p_prime += term_prod
+
+    # Para la 2da derivada:
+    p_double_prime = 0
+    for j in range(i):
+        for k in range(i):
+            if j == k: continue
+            term_prod = 1
+            for m in range(i):
+                if m != j and m != k:
+                    term_prod *= (s + m)
+            p_double_prime += term_prod
+
+    return (p_prime, p_double_prime)
+
+
+def apply_newton_derivatives(diffs, s, n, h, log_callback, x_target, backward=False):
+    """Aplica las fórmulas de derivadas (1ra y 2da) paso a paso."""
+
+    log_callback("\nCálculo de la Primera Derivada f'(x) ≈ (1/h) * Σ [ p'(s)/i! * Δⁱy ]", "step")
+    log_callback("Cálculo de la Segunda Derivada f''(x) ≈ (1/h²) * Σ [ p''(s)/i! * Δⁱy ]", "step")
+
+    total_deriv1 = 0.0
+    total_deriv2 = 0.0
+
+    for i in range(1, n):  # Empezamos en 1 (el término y0 se anula)
+        diff_term = diffs[i]
+        if np.isclose(diff_term, 0):
+            log_callback(f"  Término {i} (Δ{i}y): 0 (Diferencia nula)", "calc")
+            continue
+
+        if backward:
+            p_prime, p_double_prime = _get_s_poly_derivs_backward(i, s)
+        else:
+            p_prime, p_double_prime = _get_s_poly_derivs_forward(i, s)
+
+        factorial_i = math.factorial(i)
+
+        # Cálculo 1ra Derivada
+        current_term_d1 = (p_prime / factorial_i) * diff_term
+        total_deriv1 += current_term_d1
+
+        # Cálculo 2da Derivada
+        current_term_d2 = (p_double_prime / factorial_i) * diff_term
+        total_deriv2 += current_term_d2
+
+        log_callback(f"  Término {i}: p'({i},s)={p_prime:.3f}, p''({i},s)={p_double_prime:.3f}", "calc")
+        log_callback(f"    f' += {current_term_d1:.6f} | f'' += {current_term_d2:.6f}", "calc")
+
+    # Resultados finales
+    final_d1 = (1 / h) * total_deriv1
+    final_d2 = (1 / h ** 2) * total_deriv2
+
+    log_callback(f"\nSuma(p'/i! * Δⁱy) = {total_deriv1:.8f}", "calc")
+    log_callback(f"Suma(p''/i! * Δⁱy) = {total_deriv2:.8f}", "calc")
+
+    log_callback(f"\nResultado Primera Derivada f'({x_target}):", "deriv")
+    log_callback(f"  f'(x) = (1 / {h}) * {total_deriv1:.8f} ≈ {final_d1:.8f}", "solution")
+
+    log_callback(f"\nResultado Segunda Derivada f''({x_target}):", "deriv")
+    log_callback(f"  f''(x) = (1 / {h ** 2}) * {total_deriv2:.8f} ≈ {final_d2:.8f}", "solution")
+
